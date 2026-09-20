@@ -56,18 +56,19 @@ alp:
 .PHONY: fgprof-record
 fgprof-record:
 	go tool pprof -top http://localhost:6060/debug/fgprof?seconds=60 > /temp/fgprof.txt
+	-@curl -X POST -F txt=@/temp/fgprof.txt $(WEBHOOK_URL) -s -o /dev/null
 
 # pprofで記録する
 .PHONY: pprof-record
 pprof-record:
 	go tool pprof -top http://localhost:6060/debug/pprof/profile?seconds=60 > /temp/pprof.txt
+	-@curl -X POST -F txt=@/temp/pprof.txt $(WEBHOOK_URL) -s -o /dev/null
 
-# pprofで確認する
-.PHONY: pprof-check
-pprof-check:
+# pprof or fgprofで確認する
+.PHONY: go-check
+go-check:
 	$(eval latest := $(shell ls -rt pprof/ | tail -n 1))
 	go tool pprof -http=localhost:8090 pprof/$(latest)
-	go tool pprof -http=localhost:8070 fgprof/$(latest)
 
 .PHONY: analyze
 analyze:
@@ -78,7 +79,7 @@ analyze:
 	-@curl -X POST -F txt=@/temp/mysqldumpslow.txt $(WEBHOOK_URL) -s -o /dev/null
 	sudo pt-query-digest --limit 15 --type slowlog $(DB_SLOW_LOG) > /temp/pt-query-digest.txt
 	-@curl -X POST -F txt=@/temp/pt-query-digest.txt $(WEBHOOK_URL) -s -o /dev/null
-	-@curl -X POST -F txt=@/temp/pprof.txt $(WEBHOOK_URL) -s -o /dev/null
+	
 
 # DBに接続する
 .PHONY: db
@@ -122,11 +123,10 @@ set-nginx-alp-ltsv:
 
 .PHONY: install-tools
 install-tools:
-	sudo apt update
-	sudo apt upgrade
+	sudo apt update -y
+	sudo apt upgrade -y
 	sudo apt install -y percona-toolkit dstat git unzip snapd graphviz tree htop
 	sudo apt install -y build-essential curl wget vim
-
 
 	# alpのインストール
 	wget https://github.com/tkuchiki/alp/releases/download/v1.0.9/alp_linux_amd64.zip
@@ -139,7 +139,7 @@ install-tools:
 	rm tbls.deb
 
 	# netdataのインストール
-	- wget -O /tmp/netdata-kickstart.sh https://my-netdata.io/kickstart.sh && sh /tmp/netdata-kickstart.sh --no-updates --stable-channel --disable-telemetry
+	- wget -O /tmp/netdata-kickstart.sh https://my-netdata.io/kickstart.sh && sh /tmp/netdata-kickstart.sh --no-updates --stable-channel --disable-telemetry --yes
 
 .PHONY: git-setup
 git-setup:
@@ -147,9 +147,6 @@ git-setup:
 	git config --global user.name "server"
 	git config --global user.email "github-actions[bot]@users.noreply.github.com"
 	git config --global init.defaultbranch main
-
-	# deploykeyの作成
-	ssh-keygen -t ed25519
 
 .PHONY: check-server-id
 check-server-id:
@@ -162,15 +159,18 @@ endif
 
 .PHONY: set-as-s1
 set-as-s1:
+	touch ~/env.sh
 	echo "SERVER_ID=s1" >> ~/env.sh
 
 .PHONY: set-as-s2
 set-as-s2:
-	echo "SERVER_ID=s2" >> env.sh
+	touch ~/env.sh
+	echo "SERVER_ID=s2" >> ~/env.sh
 
 .PHONY: set-as-s3
 set-as-s3:
-	echo "SERVER_ID=s3" >> env.sh
+	touch ~/env.sh
+	echo "SERVER_ID=s3" >> ~/env.sh
 
 .PHONY: get-db-conf
 get-db-conf:
@@ -232,6 +232,7 @@ mv-logs:
 	sudo touch $(DB_SLOW_LOG)
 	sudo chmod 777 $(DB_SLOW_LOG)
 	sudo systemctl restart mysql
+	sudo rm -rf ./$(SERVER_ID)/logs/*
 
 .PHONY: watch-service-log
 watch-service-log:
