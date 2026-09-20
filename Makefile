@@ -220,19 +220,22 @@ restart:
 	sudo systemctl restart nginx
 
 .PHONY: mv-logs
-mv-logs:
-	$(eval when := $(shell date +"%M_%H_%d_%m_%Y"))
-	mkdir -p ./$(SERVER_ID)/logs/$(when)
-	sudo test -f $(NGINX_LOG) && \
-		sudo mv -f $(NGINX_LOG) ./$(SERVER_ID)/logs/$(when)/nginx || echo ""
-	sudo touch $(NGINX_LOG)
-	sudo systemctl restart nginx.service
-	sudo test -f $(DB_SLOW_LOG) && \
-		sudo mv -f $(DB_SLOW_LOG) ./$(SERVER_ID)/logs/$(when)/mysql || echo ""
-	sudo touch $(DB_SLOW_LOG)
-	sudo chmod 777 $(DB_SLOW_LOG)
-	sudo systemctl restart mysql
-	sudo rm -rf ./$(SERVER_ID)/logs/*
+mv-logs: check-server-id
+	@set -eu; \
+		mkdir -p "./$(SERVER_ID)/logs"; \
+		archive=$$(mktemp -d "./$(SERVER_ID)/logs/$$(date -u +%Y%m%dT%H%M%SZ)-XXXXXXXX"); \
+		if sudo test -f "$(NGINX_LOG)"; then \
+			sudo mv -- "$(NGINX_LOG)" "$$archive/nginx"; \
+		fi; \
+		sudo touch -- "$(NGINX_LOG)"; \
+		sudo systemctl restart nginx.service; \
+		if sudo test -f "$(DB_SLOW_LOG)"; then \
+			sudo mv -- "$(DB_SLOW_LOG)" "$$archive/mysql"; \
+		fi; \
+		sudo touch -- "$(DB_SLOW_LOG)"; \
+		sudo chmod 777 "$(DB_SLOW_LOG)"; \
+		sudo systemctl restart mysql; \
+		printf 'Saved logs to %s\n' "$$archive"
 
 .PHONY: watch-service-log
 watch-service-log:
@@ -242,5 +245,4 @@ watch-service-log:
 netdata-setup:
 	sudo cp -R $(NETDATA_CUSTOM_HTML) $(NETDATA_WEBROOT_PATH)
 	sudo systemctl restart netdata
-
 
