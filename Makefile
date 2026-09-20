@@ -123,11 +123,10 @@ set-nginx-alp-ltsv:
 
 .PHONY: install-tools
 install-tools:
-	sudo apt update
-	sudo apt upgrade
+	sudo apt update -y
+	sudo apt upgrade -y
 	sudo apt install -y percona-toolkit dstat git unzip snapd graphviz tree htop
 	sudo apt install -y build-essential curl wget vim
-
 
 	# alpのインストール
 	wget https://github.com/tkuchiki/alp/releases/download/v1.0.9/alp_linux_amd64.zip
@@ -140,7 +139,7 @@ install-tools:
 	rm tbls.deb
 
 	# netdataのインストール
-	- wget -O /tmp/netdata-kickstart.sh https://my-netdata.io/kickstart.sh && sh /tmp/netdata-kickstart.sh --no-updates --stable-channel --disable-telemetry
+	- wget -O /tmp/netdata-kickstart.sh https://my-netdata.io/kickstart.sh && sh /tmp/netdata-kickstart.sh --no-updates --stable-channel --disable-telemetry --yes
 
 .PHONY: git-setup
 git-setup:
@@ -148,9 +147,6 @@ git-setup:
 	git config --global user.name "server"
 	git config --global user.email "github-actions[bot]@users.noreply.github.com"
 	git config --global init.defaultbranch main
-
-	# deploykeyの作成
-	ssh-keygen -t ed25519
 
 .PHONY: check-server-id
 check-server-id:
@@ -163,15 +159,18 @@ endif
 
 .PHONY: set-as-s1
 set-as-s1:
+	touch ~/env.sh
 	echo "SERVER_ID=s1" >> ~/env.sh
 
 .PHONY: set-as-s2
 set-as-s2:
-	echo "SERVER_ID=s2" >> env.sh
+	touch ~/env.sh
+	echo "SERVER_ID=s2" >> ~/env.sh
 
 .PHONY: set-as-s3
 set-as-s3:
-	echo "SERVER_ID=s3" >> env.sh
+	touch ~/env.sh
+	echo "SERVER_ID=s3" >> ~/env.sh
 
 .PHONY: get-db-conf
 get-db-conf:
@@ -221,19 +220,22 @@ restart:
 	sudo systemctl restart nginx
 
 .PHONY: mv-logs
-mv-logs:
-	$(eval when := $(shell date +"%M_%H_%d_%m_%Y"))
-	mkdir -p ./$(SERVER_ID)/logs/$(when)
-	sudo test -f $(NGINX_LOG) && \
-		sudo mv -f $(NGINX_LOG) ./$(SERVER_ID)/logs/$(when)/nginx || echo ""
-	sudo touch $(NGINX_LOG)
-	sudo systemctl restart nginx.service
-	sudo test -f $(DB_SLOW_LOG) && \
-		sudo mv -f $(DB_SLOW_LOG) ./$(SERVER_ID)/logs/$(when)/mysql || echo ""
-	sudo touch $(DB_SLOW_LOG)
-	sudo chmod 777 $(DB_SLOW_LOG)
-	sudo systemctl restart mysql
-	sudo rm -rf ./$(SERVER_ID)/logs/*
+mv-logs: check-server-id
+	@set -eu; \
+		mkdir -p "./$(SERVER_ID)/logs"; \
+		archive=$$(mktemp -d "./$(SERVER_ID)/logs/$$(date -u +%Y%m%dT%H%M%SZ)-XXXXXXXX"); \
+		if sudo test -f "$(NGINX_LOG)"; then \
+			sudo mv -- "$(NGINX_LOG)" "$$archive/nginx"; \
+		fi; \
+		sudo touch -- "$(NGINX_LOG)"; \
+		sudo systemctl restart nginx.service; \
+		if sudo test -f "$(DB_SLOW_LOG)"; then \
+			sudo mv -- "$(DB_SLOW_LOG)" "$$archive/mysql"; \
+		fi; \
+		sudo touch -- "$(DB_SLOW_LOG)"; \
+		sudo chmod 777 "$(DB_SLOW_LOG)"; \
+		sudo systemctl restart mysql; \
+		printf 'Saved logs to %s\n' "$$archive"
 
 .PHONY: watch-service-log
 watch-service-log:
@@ -243,5 +245,4 @@ watch-service-log:
 netdata-setup:
 	sudo cp -R $(NETDATA_CUSTOM_HTML) $(NETDATA_WEBROOT_PATH)
 	sudo systemctl restart netdata
-
 
