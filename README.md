@@ -47,3 +47,16 @@ server_make -n build restart
 退避後のログを比較し、必要な生ログと集計結果を保存してから、不要な過去の保存先だけを
 明示的に削除する。ログ削除をベンチ前処理に組み込まない。`logs/` は Git 管理対象外で、
 アクセスログなどに含まれる認証情報や個人情報を PR に載せない。
+
+## Go pprof の結果を保存して突き合わせる
+
+CPU profile が示すのは対象 Go process が CPU 上で実行された時間であり、DB 接続 pool や
+ネットワークの待ち時間、DB・子 process が使った CPU は含まない。同じ負荷区間の HTTP の
+件数・遅延・成功失敗と、同時刻の goroutine profile を合わせて確認する。
+
+goroutine profile は取得時点の stack 分布であり、待ちの継続時間や原因ごとの寄与率を
+直接表すものではない。CPU profile など別の計測結果を裏付ける材料として使う。
+
+URL から `go tool pprof` で取得した場合は、表示された raw profile の保存先を確認する。
+raw profile、計測時の実行 binary、対応する source revision と build 情報を実行単位で保存し、
+後から同じ symbol で再解析できるようにする。`top` のテキストだけを保存して終わらせない。
