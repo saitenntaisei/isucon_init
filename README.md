@@ -3,6 +3,31 @@
 ISUCON の初期設定・ビルド・計測を `make` で行うためのリポジトリ。
 **サーバーごとに `env.sh` を設定したら、以降は基本的に `make` コマンドで進める。**
 
+## SSH agent を使って競技サーバーから GitHub に接続する
+
+管理下の競技サーバーで、手元の SSH agent に登録済みの GitHub 用の鍵を使う場合は、
+接続時に `-A` を付ける。`server.example` は対象サーバーに置き換える。
+
+```bash
+# 手元で実行し、GitHub 用の鍵が agent にあることを確認する
+ssh-add -l
+ssh -A isucon@server.example
+```
+
+サーバー内の checkout で接続を確認する。
+
+```bash
+cd ~/isucon_init
+git ls-remote origin HEAD
+git fetch origin
+```
+
+SSH ログインに使えた鍵が、サーバー内の Git に自動で引き継がれるわけではない。
+サーバー側で `Permission denied (publickey)` になる場合は、手元の agent に鍵があることと
+接続時の `-A` を確認する。転送した agent を使う接続では、同じ認証で `git push` も行える。
+
+## サーバーごとの設定値を Make に渡す
+
 Ubuntu / Debian 系、Go、MySQL / MariaDB、nginx、systemd を前提とする。
 競技用ユーザーで SSH し、Go と大会配布のアプリが配置済みのサーバーで実行する。
 この repo の `webapp/` にアプリ本体は含まれない。
