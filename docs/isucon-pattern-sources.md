@@ -1,7 +1,7 @@
 # 各回から引ける汎用パターンと出典
 
 調査日: 2026-10-17。[共通手順書へ戻る](isucon-playbook.md)。
-ISUCON1〜14の公開公式資料を横断した索引。予選と本選の区別は各リンクに従う。
+ISUCON1〜14の公開公式資料と、当事者の記事を横断した索引。予選と本選の区別は各リンクに従う。
 各行はその回から取り出せる事例であり、当日のすべての課題や最適解を網羅するものではない。
 右列の判断は、公式資料に記された事例から本書で一般化した提案である。
 
@@ -34,6 +34,33 @@ ISUCON1〜14の公開公式資料を横断した索引。予選と本選の区�
 [3予選公式講評](https://isucon.net/archives/32951806.html)、
 [7予選公式解説](https://isucon.net/archives/50961706.html)。
 
+## 参加記と技術記事
+
+本文を読んで採用した記事。著者の観測と、本書で一般化した確認手順を分ける。
+当時の版・構成での経験として扱い、根因未確定の反省や著者の推測を確定した原因へ変えない。
+具体的な手順と追加フローは [実践ノウハウ](isucon-field-notes.md) を参照。
+
+| 媒体・著者・対象 | 記事 | 取り込んだ判断と留保 |
+| --- | --- | --- |
+| 個人ブログ・さんちゃ・11予選 | [ISUCON11を振り返る](https://dawn.hateblo.jp/entry/2021/09/05/001027) | 古いデバッグログの混在と一部ホストへの未配布。実験区間と配布先を確認 |
+| 個人ブログ・sorah・13 | [ISUCON 13 参加記](https://diary.sorah.jp/2023/11/28/isucon13) | 登録の遅さが流入を抑えた可能性は著者の推測。利用者と要求の推移を調べる入口に使う |
+| 個人ブログ・pudding・12予選 | [ISUCON12予選突破の記録](https://poyo.hatenablog.jp/entry/2022/07/28/202245) | 初期データの手動変更によるFAILとデプロイ待ち。データ照合と作業滞留も確認 |
+| 個人ブログ・blue_jam・14 | [ISUCON14参加記](https://blue-jam.hatenablog.com/entry/2024/12/09/191712) | 初期化への追加SQLの組込み漏れ。走行時の実体を確認 |
+| コミュニティブログ・mazrean・12予選 | [ISUCON12予選に参加して完敗しました](https://trap.jp/post/1631/) | キャッシュ更新だけで読取の切替を忘れた例。実際の利用を計測 |
+| コミュニティブログ・Takeno_hito・14 | [ISUCON14参加記](https://trap.jp/post/2441-2/) | ベンチ担当分離後のログ見落とし。観測共有と全ホストの完了確認 |
+| Qiita・akirago・11予選 | [インフラ担当をやろうとした話](https://qiita.com/akirago/items/c3581551177887308a72) | HTTP側とHTTPS側の設定の取り違え。競技経路と実効設定を照合 |
+| Qiita・EichiSanden・13 | [ISUCON13に参加した](https://qiita.com/EichiSanden/items/2d5ed6af74a0de7f40b1) | 順番待ちと手動計測、AP停止によるDBの停止。時刻同期と停止依存の確認 |
+| Qiita・lostfind・10予選 | [やったこと、失敗したこと](https://qiita.com/lostfind/items/40f77453f8c91d49014e) | レプリカ同期前の読取。固定sleepを整合性保証にしない |
+| Qiita・mpyw・12予選 | [ISUCON 12 初参戦レポート](https://qiita.com/mpyw/items/37f053b322f24dde52e1) | 複数ストアの作成と公開順。著者のtransaction案は未検証の推測 |
+| Qiita・moezakura・8予選 | [ISUCON8に参加して予選通過](https://qiita.com/moezakura/items/a65cfae845d85cb11edd) | DB分離後の初期化接続先。通常API以外の経路も移行 |
+| Qiita・methane・7本選の事前検証 | [singleflightの注意点](https://qiita.com/methane/items/27ccaee5b989fb5fca72) | 重複計算の共有と更新直後の鮮度を区別 |
+| Zenn・Hiro Suzuki・10予選 | [ISUCON10予選通過しました](https://zenn.dev/hirosuzuki/articles/8a4f91d5dc384cba534d) | ソート変更後に検証エラーが増えて撤回。詳細な因果は未確定 |
+| Zenn・Hiro Suzuki・10本選 | [ISUCON10 本選振り返り](https://zenn.dev/hirosuzuki/articles/dfb6014229b6c4) | 単一アプリ想定の自作計測。観測対象の完全性を確認 |
+| Zenn・catatsuy・12予選 | [ISUCON12で惨敗しました](https://zenn.dev/catatsuy/articles/da25f1128650b1) | 環境構築・移行・初期化対応にかかった時間。移行の打切り条件を設ける |
+| Zenn・daiju・12予選 | [Rustで予選突破した](https://zenn.dev/daiju/articles/165da7a5589434) | lock置換を撤回し保持中のN+1削減へ。方式変更と保持時間短縮を比較 |
+| Zenn・とーふとふ・12本選 | [ISUCON12で優勝しました](https://zenn.dev/tohutohu/articles/8c34d1187e1b21) | master更新時の再構築殺到を抑制。当該構成の報告として扱う |
+| Zenn・Iceman・13 | [ISUCON13 参加記](https://zenn.dev/iceman/articles/5aad04f18b128f) | 空のbulk INSERT、観測漏れ、復旧手順の見落とし。復旧案の効果は未確認 |
+
 ## ツールの一次資料
 
 | 資料 | 本書で確認に使った内容 |
@@ -43,5 +70,6 @@ ISUCON1〜14の公開公式資料を横断した索引。予選と本選の区�
 | [Go Diagnostics](https://go.dev/doc/diagnostics) | CPU・heap・goroutine・block・mutex・traceの用途と計測の影響 |
 | [MySQL Multiple-Column Indexes](https://dev.mysql.com/doc/refman/8.0/en/multiple-column-indexes.html) | 複合索引と左端の列の組合せ |
 | [nginx proxy_buffering](https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_buffering) | proxyのbufferingと`X-Accel-Buffering` |
+| [singleflight](https://pkg.go.dev/golang.org/x/sync/singleflight) | 同じキーで進行中の呼出しが結果を共有する範囲 |
 
 コマンドや設定の細部は実際に使うバージョンの資料で再確認する。
