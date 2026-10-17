@@ -196,3 +196,19 @@ gap にはアプリ処理やファイル操作だけでなく、scheduler、driv
 保持時間の合計は並行 transaction の connection-seconds であり、壁時計時間ではない。
 また、読み取りだけの transaction と書き込み transaction を分離する。読み取り transaction の
 `COMMIT` 回数や全 `COMMIT` の合計だけから、永続化処理が支配的だとは判断しない。
+
+## autocommit へ移った COMMIT 費用を追う
+
+明示的な transaction 内の書き込みを autocommit の書き込みへ変えると、slow log 上の
+`COMMIT` は減る。一方、autocommit では各 statement が transaction になるため、書き込み
+statement の `Query_time` に commit 完了までの待ちが含まれ得る。`COMMIT` の件数・累積時間・
+順位が下がったことだけでは、DB の commit 負担が減ったとは判断しない。
+
+変更前は対象の書き込みと、同じ接続で対応する `COMMIT` を一つの論理操作として調べ、変更後は
+autocommit の書き込みと比較する。同じ負荷区間で呼び出し数、累積時間、分位値を確認し、HTTP の
+遅延・成功失敗、接続 pool 待ち、最終整合性検証も合わせる。複数 handler や複数の書き込みが
+同じ transaction を共有する場合、全 `COMMIT` の平均を特定の statement に割り当てない。
+
+DB・storage engine・driver と slow log の仕様を確認し、autocommit が実際に有効かも確かめる。
+書き込み statement の時間だけから、fsync、group commit、storage、scheduler の寄与を分離したり、
+commit 待ちだけが支配的だと断定したりしない。
