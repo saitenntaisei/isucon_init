@@ -160,3 +160,16 @@ mysqlConfig.InterpolateParams = true
 `server_make slow-off` の順に実行し、初期化・負荷試験・最終整合性検証まで完了させる。
 同じサーバーとログ条件で、スコア・タイムアウト・SQL 件数・準備処理の累積時間を記録する。
 クエリ単体の短縮だけで採用せず、全体の結果が改善した変更を残す。
+
+## Go pprof の結果を保存して突き合わせる
+
+CPU profile が示すのは対象 Go process が CPU 上で実行された時間であり、DB 接続 pool や
+ネットワークの待ち時間、DB・子 process が使った CPU は含まない。同じ負荷区間の HTTP の
+件数・遅延・成功失敗と、同時刻の goroutine profile を合わせて確認する。
+
+goroutine profile は取得時点の stack 分布であり、待ちの継続時間や原因ごとの寄与率を
+直接表すものではない。CPU profile など別の計測結果を裏付ける材料として使う。
+
+URL から `go tool pprof` で取得した場合は、表示された raw profile の保存先を確認する。
+raw profile、計測時の実行 binary、対応する source revision と build 情報を実行単位で保存し、
+後から同じ symbol で再解析できるようにする。`top` のテキストだけを保存して終わらせない。
