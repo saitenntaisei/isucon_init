@@ -173,3 +173,26 @@ goroutine profile は取得時点の stack 分布であり、待ちの継続時�
 URL から `go tool pprof` で取得した場合は、表示された raw profile の保存先を確認する。
 raw profile、計測時の実行 binary、対応する source revision と build 情報を実行単位で保存し、
 後から同じ symbol で再解析できるようにする。`top` のテキストだけを保存して終わらせない。
+
+## DB 接続 pool 待ちの接続保持者を調べる
+
+goroutine profile などで DB 接続 pool 待ちを確認しても、それだけでは接続を長く保持した
+処理や待ち時間への寄与は分からない。全 SQL を記録した slow log を接続 ID（`Thread_id`）ごとに並べ、
+`START TRANSACTION` から `COMMIT` / `ROLLBACK` までを対応付けて transaction を復元する。
+
+slow log の時刻が SQL の開始と終了のどちらを示すかは、使用中の DB と log 形式で確認する。
+終了時刻を記録する形式なら `開始 = 記録時刻 - Query_time` とし、連続 SQL の区間が不自然に
+重ならないか、未対応の開始・終了がないかを検証してから、次を分けて集計する。
+
+- transaction の接続保持時間
+- SQL の `Query_time` の合計
+- SQL 終了から次の SQL 開始までの gap
+
+gap にはアプリ処理やファイル操作だけでなく、scheduler、driver、network、計測精度の影響も
+含まれ得るため、純粋なアプリ CPU 時間とは断定しない。SQL の並びを handler の実装と照合し、
+必要なら application trace や profile で裏付ける。
+
+初期化・検証を混ぜず、正確な負荷区間と重なる transaction は区間境界で保持時間を切り詰める。
+保持時間の合計は並行 transaction の connection-seconds であり、壁時計時間ではない。
+また、読み取りだけの transaction と書き込み transaction を分離する。読み取り transaction の
+`COMMIT` 回数や全 `COMMIT` の合計だけから、永続化処理が支配的だとは判断しない。
