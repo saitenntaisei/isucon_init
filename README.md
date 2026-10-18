@@ -35,56 +35,25 @@ Ubuntu / Debian 系、Go、MySQL / MariaDB、nginx、systemd を前提とする�
 
 ## 試合開始時
 
-### 手元で実アプリの基準をGitへ取り込む
+このテンプレートを元に競技用privateリポジトリを用意し、手元と競技サーバーで使う。
+公開repoへ実環境の設定やアプリをpushしない。取得範囲はユーザー指示と既存の取得タスクに従い、
+独自の除外や追加で減らしたり増やしたりしない。既に取得・commit・push済みなら重複取得は不要。
 
-まず、このテンプレートを元に競技用privateリポジトリを用意し、手元へcloneする。
-稼働アプリの正規のソース配置から、ビルドに必要な全ソース・依存定義・初期化schemaを取得する。
-以下はGoの例。接続先・pathと `app_files` を実物に合わせ、必要な実装やtemplateもファイル単位で列挙する。
-秘密env、鍵、DB行データ・dump・初期データ、生成binary・logは選ばない。
-`git add .` やアプリディレクトリ全体の無差別な取り込みは行わない。
+`make get-conf` の対象は次の4つ。既存タスクの出力をそのままGitで管理する。
 
-```bash
-set -euo pipefail
-competition_git_url=git@github.com:example-team/contest-private.git
-app_host=isucon@server.example
-app_root=/srv/contest-app
-git clone "$competition_git_url" competition
-cd competition
-app_files=(go/main.go go/go.mod go/go.sum sql/schema.sql sql/init.sh)
-managed_paths=()
-for path in "${app_files[@]}"; do
-  mkdir -p "webapp/$(dirname "$path")"
-  scp "$app_host:$app_root/$path" "webapp/$path"
-  managed_paths+=("webapp/$path")
-done
-git add -- "${managed_paths[@]}"
-git diff --cached --stat -- "${managed_paths[@]}"
-git diff --cached -- "${managed_paths[@]}"
-git commit --only -m "chore: import application baseline" -- "${managed_paths[@]}"
-baseline_commit=$(git rev-parse HEAD)
-setup_branch=$(git branch --show-current)
-git push origin "HEAD:refs/heads/$setup_branch"
-test "$(git ls-remote origin "refs/heads/$setup_branch" | cut -f1)" = "$baseline_commit"
-printf 'baseline_commit=%s\n' "$baseline_commit"
-for path in "${app_files[@]}"; do
-  remote_digest=$(ssh "$app_host" "sha256sum '$app_root/$path'")
-  committed_digest=$(git show "$baseline_commit:webapp/$path" | sha256sum)
-  test "${remote_digest%% *}" = "${committed_digest%% *}" || exit 1
-  printf '%s  %s\n' "${committed_digest%% *}" "webapp/$path"
-done
-```
+| ターゲット | 取得元 | Git作業path |
+| --- | --- | --- |
+| `get-db-conf` | `DB_PATH` 全体 | `<SERVER_ID>/etc/mysql/` |
+| `get-nginx-conf` | `NGINX_PATH` 全体 | `<SERVER_ID>/etc/nginx/` |
+| `get-service-file` | `SYSTEMD_PATH/SERVICE_NAME` | `<SERVER_ID>/etc/systemd/system/<SERVICE_NAME>` |
+| `get-envsh` | 存在する場合の `APP_ENV` | `<SERVER_ID>/home/isucon/env.sh` |
 
-取得元は稼働アプリに対応するソース配置とし、取り込んだcommitと稼働ソースの対応を上記の照合で記録する。
-既に同じ実アプリとschemaが競技用private Gitにcommit・pushされ、この対応も確認済みなら、重複取得・commitは不要。
-変更対象の設定も、秘密を除いて初回の `make setup` より前から [Gitで管理する](#変更と復元はgitで管理する)。
+`get-conf` はアプリsourceの取得タスクではない。別途指定されたアプリ取得がある場合も、
+そのタスク・指示の範囲をそのまま扱う。設定やpatchだけでアプリ本体を取得済みとは報告しない。
 
-### サーバーで設定する
-
-続いて各サーバーで、同じ競技用privateリポジトリを使って以下を上から実行する。
-GitHubへのSSH接続、Git、Make、sudoが必要。URLは手元で使ったものに合わせる。
-`server_id` は `env.sh` の `SERVER_ID` に合わせ、`config_paths` は変更対象の設定ファイルを列挙する。
-nginx.conf以外の `NGINX_ACCESS_CONFIG` を使う場合は、その設定も含める。秘密を含むファイルは選ばない。
-`make get-conf` はツール導入やサービス変更に依存しないため、setup前にサーバー別のGit作業pathへ取り込める。
+各サーバーで以下を上から実行する。GitHubへのSSH接続、Git、Make、sudoが必要。
+`competition_git_url` は競技用private repo、`server_id` と `service_name` は `env.sh` の値に合わせる。
+`make get-conf` はツール導入やサービス変更に依存しないため、setup前に実行できる。
 
 ```bash
 set -euo pipefail
@@ -97,12 +66,20 @@ make check
 make git-setup
 make get-conf
 server_id=server-a
-config_paths=("$server_id/etc/nginx/nginx.conf")
+service_name=app.service
+get_conf_paths=(
+  "$server_id/etc/mysql"
+  "$server_id/etc/nginx"
+  "$server_id/etc/systemd/system/$service_name"
+)
+if [ -f "$server_id/home/isucon/env.sh" ]; then
+  get_conf_paths+=("$server_id/home/isucon/env.sh")
+fi
 record_config_commit() {
-  git add -- "${config_paths[@]}"
-  git diff --cached -- "${config_paths[@]}"
-  if ! git diff --cached --quiet -- "${config_paths[@]}"; then
-    git commit --only -m "$1" -- "${config_paths[@]}"
+  git add -f --all -- "${get_conf_paths[@]}"
+  git diff --cached --stat -- "${get_conf_paths[@]}"
+  if ! git diff --cached --quiet -- "${get_conf_paths[@]}"; then
+    git commit --only -m "$1" -- "${get_conf_paths[@]}"
   fi
   config_commit=$(git rev-parse HEAD)
   config_branch=$(git branch --show-current)
@@ -118,11 +95,14 @@ record_config_commit "chore: record applied setup configuration"
 
 既に clone 済みなら、そのディレクトリで `make init-env` から進める。
 設定の基準commitをprivate remoteへ反映してからsetupし、変更後も同じ対象pathだけをcommitする。
+`git add -f` は取得範囲に限定し、ignoreでmysql/nginx設定や取得したenvが落ちることを防ぐ。
+ログなど取得タスク外のファイルを含めるために、サーバー別ディレクトリ全体へ範囲を広げない。
 `make init-env` は [設定例](env.sh.example) をコピーし、既存の `env.sh` は保持する。
 初期スコアを記録する場合は、`make setup` より前に大会指定のベンチマーカーを実行する。
 
-環境構築は、手元に実アプリ本体とschemaがあり、選別した内容のcommit・private remoteへのpush・remote commit一致、
-稼働ソースとの対応確認まで終わって初めて完了とする。`.gitkeep`だけ、運用設定だけ、patchだけの状態では完了と報告しない。
+環境構築は、指定された取得タスクの成果を取りこぼさずcommit・private remoteへpushし、remote commit一致まで確認して完了とする。
+アプリ取得も指定されている場合は、その実source・schemaと稼働ソースの対応確認も含む。
+`.gitkeep`だけ、設定だけ、patchだけの状態で、指定された実アプリ取得まで完了したと報告しない。
 
 `env.sh` では、主に以下を大会環境に合わせる。
 
@@ -139,7 +119,8 @@ record_config_commit "chore: record applied setup configuration"
 
 `env.sh` は Make の代入形式で書く。値を引用符で囲まず、`source` する必要はない。
 シェルで export した変数だけでも使える。優先順位は **make の引数 → env.sh → export → 既定値**。
-認証情報を含む `env.sh` とサーバー別のコピーは Git 管理対象外。
+既定のignoreには `env.sh` などがある。競技用private Gitへ取得成果を記録する場合は、
+ignoreを理由にユーザー指定・既存タスクの対象を落とさない。実設定や認証情報を公開repoへpushしない。
 
 `make setup` は次の処理を順に行う。
 
@@ -149,14 +130,14 @@ record_config_commit "chore: record applied setup configuration"
 
 nginx の設定処理は繰り返し実行でき、構文確認に失敗した場合は変更前の内容へ戻す。
 `make setup` はバックアップアーカイブを作成しない。
-`make get-conf` で取得した設定も、秘密情報を除いてからコミットする。
+`make get-conf` の成果は上記の取得範囲のまま競技用private Gitへcommitする。
 
 ## 変更と復元はGitで管理する
 
 ソース・設定・初期化schemaは変更前からGitで管理し、基準commitと反映するcommitを記録する。
 実アプリは上記の競技用private Git checkoutで管理する。変更差分、既存DBへ適用するmigration、
 対応するrollback SQLもcommitし、初期化後に再現する変更と既存DBへの変更を区別する。
-秘密を含むファイルをGitへ追加しない。
+管理範囲はユーザー指示を優先し、独自の除外・追加で変更しない。実環境のファイルを公開repoへ流さない。
 
 変更前の退避を理由に、依頼されていない `cp`、`.bak`、snapshot、アーカイブを追加しない。
 明示的な `make backup` も、ユーザーがバックアップを指示した場合だけ実行する。
