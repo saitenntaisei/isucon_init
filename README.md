@@ -82,19 +82,42 @@ done
 
 続いて各サーバーで、同じ競技用privateリポジトリを使って以下を上から実行する。
 GitHubへのSSH接続、Git、Make、sudoが必要。URLは手元で使ったものに合わせる。
+`server_id` は `env.sh` の `SERVER_ID` に合わせ、`config_paths` は変更対象の設定ファイルを列挙する。
+nginx.conf以外の `NGINX_ACCESS_CONFIG` を使う場合は、その設定も含める。秘密を含むファイルは選ばない。
+`make get-conf` はツール導入やサービス変更に依存しないため、setup前にサーバー別のGit作業pathへ取り込める。
 
 ```bash
+set -euo pipefail
 competition_git_url=git@github.com:example-team/contest-private.git
 git clone "$competition_git_url" competition
 cd competition
 make init-env
 ${EDITOR:-vi} env.sh
 make check
+make git-setup
+make get-conf
+server_id=server-a
+config_paths=("$server_id/etc/nginx/nginx.conf")
+record_config_commit() {
+  git add -- "${config_paths[@]}"
+  git diff --cached -- "${config_paths[@]}"
+  if ! git diff --cached --quiet -- "${config_paths[@]}"; then
+    git commit --only -m "$1" -- "${config_paths[@]}"
+  fi
+  config_commit=$(git rev-parse HEAD)
+  config_branch=$(git branch --show-current)
+  git push origin "HEAD:refs/heads/$config_branch"
+  test "$(git ls-remote origin "refs/heads/$config_branch" | cut -f1)" = "$config_commit"
+  printf 'config_commit=%s\n' "$config_commit"
+}
+record_config_commit "chore: record setup configuration baseline"
 make setup
 make get-conf
+record_config_commit "chore: record applied setup configuration"
 ```
 
 既に clone 済みなら、そのディレクトリで `make init-env` から進める。
+設定の基準commitをprivate remoteへ反映してからsetupし、変更後も同じ対象pathだけをcommitする。
 `make init-env` は [設定例](env.sh.example) をコピーし、既存の `env.sh` は保持する。
 初期スコアを記録する場合は、`make setup` より前に大会指定のベンチマーカーを実行する。
 
