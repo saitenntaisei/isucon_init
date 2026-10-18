@@ -26,3 +26,7 @@ __pycache__/
 # s1 server credentials and TLS material
 /s1/etc/mysql/debian.cnf
 /s1/etc/nginx/tls/
+
+# s2 server credentials and TLS material
+/s2/etc/mysql/debian.cnf
+/s2/etc/nginx/tls/
