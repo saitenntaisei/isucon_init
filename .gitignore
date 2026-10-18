@@ -22,3 +22,7 @@ env.sh
 logs
 pprof
 __pycache__/
+
+# s1 server credentials and TLS material
+/s1/etc/mysql/debian.cnf
+/s1/etc/nginx/tls/
