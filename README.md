@@ -30,17 +30,63 @@ SSH ログインに使えた鍵が、サーバー内の Git に自動で引き�
 
 Ubuntu / Debian 系、Go、MySQL / MariaDB、nginx、systemd を前提とする。
 競技用ユーザーで SSH し、Go と大会配布のアプリが配置済みのサーバーで実行する。
-この repo の `webapp/` にアプリ本体は含まれない。
+この公開テンプレートの `webapp/` にアプリ本体は含まれない。
+実アプリは競技用の **privateリポジトリ** に取り込み、この公開repoにはcommitしない。
 
 ## 試合開始時
 
-各サーバーで、以下を上から実行する。GitHub への SSH 接続、Git、Make、sudo が必要。
-変更対象のソース・設定・schemaは、初回の `make setup` より前から
-[Gitで管理する](#変更と復元はgitで管理する)。
+### 手元で実アプリの基準をGitへ取り込む
+
+まず、このテンプレートを元に競技用privateリポジトリを用意し、手元へcloneする。
+稼働アプリの正規のソース配置から、ビルドに必要な全ソース・依存定義・初期化schemaを取得する。
+以下はGoの例。接続先・pathと `app_files` を実物に合わせ、必要な実装やtemplateもファイル単位で列挙する。
+秘密env、鍵、DB行データ・dump・初期データ、生成binary・logは選ばない。
+`git add .` やアプリディレクトリ全体の無差別な取り込みは行わない。
 
 ```bash
-git clone git@github.com:saitenntaisei/isucon_init.git
-cd isucon_init
+set -euo pipefail
+competition_git_url=git@github.com:example-team/contest-private.git
+app_host=isucon@server.example
+app_root=/srv/contest-app
+git clone "$competition_git_url" competition
+cd competition
+app_files=(go/main.go go/go.mod go/go.sum sql/schema.sql sql/init.sh)
+managed_paths=()
+for path in "${app_files[@]}"; do
+  mkdir -p "webapp/$(dirname "$path")"
+  scp "$app_host:$app_root/$path" "webapp/$path"
+  managed_paths+=("webapp/$path")
+done
+git add -- "${managed_paths[@]}"
+git diff --cached --stat -- "${managed_paths[@]}"
+git diff --cached -- "${managed_paths[@]}"
+git commit --only -m "chore: import application baseline" -- "${managed_paths[@]}"
+baseline_commit=$(git rev-parse HEAD)
+setup_branch=$(git branch --show-current)
+git push origin "HEAD:refs/heads/$setup_branch"
+test "$(git ls-remote origin "refs/heads/$setup_branch" | cut -f1)" = "$baseline_commit"
+printf 'baseline_commit=%s\n' "$baseline_commit"
+for path in "${app_files[@]}"; do
+  remote_digest=$(ssh "$app_host" "sha256sum '$app_root/$path'")
+  committed_digest=$(git show "$baseline_commit:webapp/$path" | sha256sum)
+  test "${remote_digest%% *}" = "${committed_digest%% *}" || exit 1
+  printf '%s  %s\n' "${committed_digest%% *}" "webapp/$path"
+done
+```
+
+取得元は稼働アプリに対応するソース配置とし、取り込んだcommitと稼働ソースの対応を上記の照合で記録する。
+既に同じ実アプリとschemaが競技用private Gitにcommit・pushされ、この対応も確認済みなら、重複取得・commitは不要。
+変更対象の設定も、秘密を除いて初回の `make setup` より前から [Gitで管理する](#変更と復元はgitで管理する)。
+
+### サーバーで設定する
+
+続いて各サーバーで、同じ競技用privateリポジトリを使って以下を上から実行する。
+GitHubへのSSH接続、Git、Make、sudoが必要。URLは手元で使ったものに合わせる。
+
+```bash
+competition_git_url=git@github.com:example-team/contest-private.git
+git clone "$competition_git_url" competition
+cd competition
 make init-env
 ${EDITOR:-vi} env.sh
 make check
@@ -51,6 +97,9 @@ make get-conf
 既に clone 済みなら、そのディレクトリで `make init-env` から進める。
 `make init-env` は [設定例](env.sh.example) をコピーし、既存の `env.sh` は保持する。
 初期スコアを記録する場合は、`make setup` より前に大会指定のベンチマーカーを実行する。
+
+環境構築は、手元に実アプリ本体とschemaがあり、選別した内容のcommit・private remoteへのpush・remote commit一致、
+稼働ソースとの対応確認まで終わって初めて完了とする。`.gitkeep`だけ、運用設定だけ、patchだけの状態では完了と報告しない。
 
 `env.sh` では、主に以下を大会環境に合わせる。
 
@@ -82,7 +131,7 @@ nginx の設定処理は繰り返し実行でき、構文確認に失敗した�
 ## 変更と復元はGitで管理する
 
 ソース・設定・初期化schemaは変更前からGitで管理し、基準commitと反映するcommitを記録する。
-このrepoに含まれないアプリはアプリ側のGit checkoutで管理する。変更差分、既存DBへ適用するmigration、
+実アプリは上記の競技用private Git checkoutで管理する。変更差分、既存DBへ適用するmigration、
 対応するrollback SQLもcommitし、初期化後に再現する変更と既存DBへの変更を区別する。
 秘密を含むファイルをGitへ追加しない。
 
