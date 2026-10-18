@@ -30,25 +30,79 @@ SSH ログインに使えた鍵が、サーバー内の Git に自動で引き�
 
 Ubuntu / Debian 系、Go、MySQL / MariaDB、nginx、systemd を前提とする。
 競技用ユーザーで SSH し、Go と大会配布のアプリが配置済みのサーバーで実行する。
-この repo の `webapp/` にアプリ本体は含まれない。
+この公開テンプレートの `webapp/` にアプリ本体は含まれない。
+実アプリは競技用の **privateリポジトリ** に取り込み、この公開repoにはcommitしない。
 
 ## 試合開始時
 
-各サーバーで、以下を上から実行する。GitHub への SSH 接続、Git、Make、sudo が必要。
+このテンプレートを元に競技用privateリポジトリを用意し、手元と競技サーバーで使う。
+公開repoへ実環境の設定やアプリをpushしない。取得範囲はユーザー指示と既存の取得タスクに従い、
+独自の除外や追加で減らしたり増やしたりしない。既に取得・commit・push済みなら重複取得は不要。
+
+`make get-conf` の対象は次の4つ。既存タスクの出力をそのままGitで管理する。
+
+| ターゲット | 取得元 | Git作業path |
+| --- | --- | --- |
+| `get-db-conf` | `DB_PATH` 全体 | `<SERVER_ID>/etc/mysql/` |
+| `get-nginx-conf` | `NGINX_PATH` 全体 | `<SERVER_ID>/etc/nginx/` |
+| `get-service-file` | `SYSTEMD_PATH/SERVICE_NAME` | `<SERVER_ID>/etc/systemd/system/<SERVICE_NAME>` |
+| `get-envsh` | 存在する場合の `APP_ENV` | `<SERVER_ID>/home/isucon/env.sh` |
+
+`get-conf` はアプリsourceの取得タスクではない。別途指定されたアプリ取得がある場合も、
+そのタスク・指示の範囲をそのまま扱う。設定やpatchだけでアプリ本体を取得済みとは報告しない。
+
+各サーバーで以下を上から実行する。GitHubへのSSH接続、Git、Make、sudoが必要。
+`competition_git_url` は競技用private repo、`server_id` と `service_name` は `env.sh` の値に合わせる。
+`make get-conf` はツール導入やサービス変更に依存しないため、setup前に実行できる。
 
 ```bash
-git clone git@github.com:saitenntaisei/isucon_init.git
-cd isucon_init
+set -euo pipefail
+competition_git_url=git@github.com:example-team/contest-private.git
+git clone "$competition_git_url" competition
+cd competition
 make init-env
 ${EDITOR:-vi} env.sh
 make check
+make git-setup
+make get-conf
+server_id=server-a
+service_name=app.service
+get_conf_paths=(
+  "$server_id/etc/mysql"
+  "$server_id/etc/nginx"
+  "$server_id/etc/systemd/system/$service_name"
+)
+if [ -f "$server_id/home/isucon/env.sh" ]; then
+  get_conf_paths+=("$server_id/home/isucon/env.sh")
+fi
+record_config_commit() {
+  git add -f --all -- "${get_conf_paths[@]}"
+  git diff --cached --stat -- "${get_conf_paths[@]}"
+  if ! git diff --cached --quiet -- "${get_conf_paths[@]}"; then
+    git commit --only -m "$1" -- "${get_conf_paths[@]}"
+  fi
+  config_commit=$(git rev-parse HEAD)
+  config_branch=$(git branch --show-current)
+  git push origin "HEAD:refs/heads/$config_branch"
+  test "$(git ls-remote origin "refs/heads/$config_branch" | cut -f1)" = "$config_commit"
+  printf 'config_commit=%s\n' "$config_commit"
+}
+record_config_commit "chore: record setup configuration baseline"
 make setup
 make get-conf
+record_config_commit "chore: record applied setup configuration"
 ```
 
 既に clone 済みなら、そのディレクトリで `make init-env` から進める。
+設定の基準commitをprivate remoteへ反映してからsetupし、変更後も同じ対象pathだけをcommitする。
+`git add -f` は取得範囲に限定し、ignoreでmysql/nginx設定や取得したenvが落ちることを防ぐ。
+ログなど取得タスク外のファイルを含めるために、サーバー別ディレクトリ全体へ範囲を広げない。
 `make init-env` は [設定例](env.sh.example) をコピーし、既存の `env.sh` は保持する。
 初期スコアを記録する場合は、`make setup` より前に大会指定のベンチマーカーを実行する。
+
+環境構築は、指定された取得タスクの成果を取りこぼさずcommit・private remoteへpushし、remote commit一致まで確認して完了とする。
+アプリ取得も指定されている場合は、その実source・schemaと稼働ソースの対応確認も含む。
+`.gitkeep`だけ、設定だけ、patchだけの状態で、指定された実アプリ取得まで完了したと報告しない。
 
 `env.sh` では、主に以下を大会環境に合わせる。
 
@@ -65,17 +119,57 @@ make get-conf
 
 `env.sh` は Make の代入形式で書く。値を引用符で囲まず、`source` する必要はない。
 シェルで export した変数だけでも使える。優先順位は **make の引数 → env.sh → export → 既定値**。
-認証情報を含む `env.sh` とサーバー別のコピーは Git 管理対象外。
+既定のignoreには `env.sh` などがある。競技用private Gitへ取得成果を記録する場合は、
+ignoreを理由にユーザー指定・既存タスクの対象を落とさない。実設定や認証情報を公開repoへpushしない。
 
 `make setup` は次の処理を順に行う。
 
-1. 初期設定とアプリを `local/start-<SERVER_ID>-*/original.tar.gz` に保存。
-2. alp、tbls、DB 解析ツールなどをインストール。
-3. `GIT_USER_NAME` / `GIT_USER_EMAIL` をこの repo の Git 設定に反映。
-4. 対象の nginx アクセスログを LTSV に変更し、構文確認後に reload。
+1. alp、tbls、DB 解析ツールなどをインストール。
+2. `GIT_USER_NAME` / `GIT_USER_EMAIL` をこの repo の Git 設定に反映。
+3. 対象の nginx アクセスログを LTSV に変更し、構文確認後に reload。
 
 nginx の設定処理は繰り返し実行でき、構文確認に失敗した場合は変更前の内容へ戻す。
-バックアップには DB のデータは含まれない。`make get-conf` で取得した設定も、秘密情報を除いてからコミットする。
+`make setup` はバックアップアーカイブを作成しない。
+`make get-conf` の成果は上記の取得範囲のまま競技用private Gitへcommitする。
+
+## 変更と復元はGitで管理する
+
+ソース・設定・初期化schemaは変更前からGitで管理し、基準commitと反映するcommitを記録する。
+実アプリは上記の競技用private Git checkoutで管理する。変更差分、既存DBへ適用するmigration、
+対応するrollback SQLもcommitし、初期化後に再現する変更と既存DBへの変更を区別する。
+管理範囲はユーザー指示を優先し、独自の除外・追加で変更しない。実環境のファイルを公開repoへ流さない。
+
+変更前の退避を理由に、依頼されていない `cp`、`.bak`、snapshot、アーカイブを追加しない。
+明示的な `make backup` も、ユーザーがバックアップを指示した場合だけ実行する。
+このターゲットは設定とアプリのアーカイブであり、DBの行データは含まない。
+GitもDBの行データのバックアップを代替しない。別途DBバックアップが必要になった場合は、
+その目的と範囲が依頼に含まれているかを確認し、含まれなければユーザーの意図を確認する。
+既に明示された指示があれば、その範囲で進める。
+
+次はこのrepoの `README.md` を対象にした例。実作業では管理対象のpathに置き換え、
+対象を限定してcommitする。他の作業の変更をまとめて取り込まない。
+
+```bash
+managed_path=README.md
+git add -- "$managed_path"
+if ! git diff --cached --quiet -- "$managed_path"; then
+  git commit --only -m "doc: record managed baseline" -- "$managed_path"
+fi
+baseline_commit=$(git rev-parse HEAD)
+git show --stat "$baseline_commit" -- "$managed_path"
+```
+
+候補も同じようにcommitしてから、そのcommitを反映する。復元時は基準commitと対象pathを明示する。
+次の操作は指定pathのindexと作業ファイルを戻すため、そのpathの必要な変更は先にcommitする。
+
+```bash
+git restore --source="$baseline_commit" --staged --worktree -- "$managed_path"
+```
+
+schemaファイルをGitで戻しても既存DBの索引や行データは戻らない。必要なrollback SQLだけを実行する。
+固定したcommitと差分に必要な操作だけを行い、無関係なファイルの復元やサービス再起動を追加しない。
+ドキュメントや自分で追記した規則を、元からあったユーザー指示として説明しない。
+ユーザーの明示指示を優先する。
 
 ## ビルド・ベンチ・集計
 
@@ -114,7 +208,7 @@ DB と Go のバージョン、DB の有効設定と索引、nginx と systemd �
 | コマンド | 処理 |
 | --- | --- |
 | `make` | コマンド一覧 |
-| `make backup` | 現在の設定とアプリをバックアップ |
+| `make backup` | ユーザーが指示した場合に設定とアプリをアーカイブ（DB行データは対象外） |
 | `make build` | アプリのビルドのみ |
 | `make restart` | DB・nginx・アプリを再起動 |
 | `make get-conf` | 設定をサーバー別ディレクトリへ取得 |

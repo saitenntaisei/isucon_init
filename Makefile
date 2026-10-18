@@ -47,7 +47,7 @@ help:
 	@printf '%s\n' \
 		'make init-env   設定例から env.sh を作る（既存ファイルは保持）' \
 		'make check      設定とアプリの配置先を確認' \
-		'make setup      バックアップ・ツール導入・Git/nginx 設定' \
+		'make setup      ツール導入・Git/nginx 設定' \
 		'make get-conf   現在のサーバー設定を取得' \
 		'make bench      ビルド・ログ退避・再起動・計測準備' \
 		'make analyze    生ログと集計結果を保存' \
@@ -81,7 +81,7 @@ backup: check
 
 # サーバーの環境構築　ツールのインストール、gitまわりのセットアップ
 .PHONY: setup
-setup: backup install-tools git-setup set-nginx-alp-ltsv
+setup: install-tools git-setup set-nginx-alp-ltsv
 
 # 設定ファイルなどを取得してgit管理下に配置する
 .PHONY: get-conf
