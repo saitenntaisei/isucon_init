@@ -35,6 +35,8 @@ Ubuntu / Debian 系、Go、MySQL / MariaDB、nginx、systemd を前提とする�
 ## 試合開始時
 
 各サーバーで、以下を上から実行する。GitHub への SSH 接続、Git、Make、sudo が必要。
+変更対象のソース・設定・schemaは、初回の `make setup` より前から
+[Gitで管理する](#変更と復元はgitで管理する)。
 
 ```bash
 git clone git@github.com:saitenntaisei/isucon_init.git
@@ -69,13 +71,52 @@ make get-conf
 
 `make setup` は次の処理を順に行う。
 
-1. 初期設定とアプリを `local/start-<SERVER_ID>-*/original.tar.gz` に保存。
-2. alp、tbls、DB 解析ツールなどをインストール。
-3. `GIT_USER_NAME` / `GIT_USER_EMAIL` をこの repo の Git 設定に反映。
-4. 対象の nginx アクセスログを LTSV に変更し、構文確認後に reload。
+1. alp、tbls、DB 解析ツールなどをインストール。
+2. `GIT_USER_NAME` / `GIT_USER_EMAIL` をこの repo の Git 設定に反映。
+3. 対象の nginx アクセスログを LTSV に変更し、構文確認後に reload。
 
 nginx の設定処理は繰り返し実行でき、構文確認に失敗した場合は変更前の内容へ戻す。
-バックアップには DB のデータは含まれない。`make get-conf` で取得した設定も、秘密情報を除いてからコミットする。
+`make setup` はバックアップアーカイブを作成しない。
+`make get-conf` で取得した設定も、秘密情報を除いてからコミットする。
+
+## 変更と復元はGitで管理する
+
+ソース・設定・初期化schemaは変更前からGitで管理し、基準commitと反映するcommitを記録する。
+このrepoに含まれないアプリはアプリ側のGit checkoutで管理する。変更差分、既存DBへ適用するmigration、
+対応するrollback SQLもcommitし、初期化後に再現する変更と既存DBへの変更を区別する。
+秘密を含むファイルをGitへ追加しない。
+
+変更前の退避を理由に、依頼されていない `cp`、`.bak`、snapshot、アーカイブを追加しない。
+明示的な `make backup` も、ユーザーがバックアップを指示した場合だけ実行する。
+このターゲットは設定とアプリのアーカイブであり、DBの行データは含まない。
+GitもDBの行データのバックアップを代替しない。別途DBバックアップが必要になった場合は、
+その目的と範囲が依頼に含まれているかを確認し、含まれなければユーザーの意図を確認する。
+既に明示された指示があれば、その範囲で進める。
+
+次はこのrepoの `README.md` を対象にした例。実作業では管理対象のpathに置き換え、
+対象を限定してcommitする。他の作業の変更をまとめて取り込まない。
+
+```bash
+managed_path=README.md
+git add -- "$managed_path"
+if ! git diff --cached --quiet -- "$managed_path"; then
+  git commit --only -m "doc: record managed baseline" -- "$managed_path"
+fi
+baseline_commit=$(git rev-parse HEAD)
+git show --stat "$baseline_commit" -- "$managed_path"
+```
+
+候補も同じようにcommitしてから、そのcommitを反映する。復元時は基準commitと対象pathを明示する。
+次の操作は指定pathのindexと作業ファイルを戻すため、そのpathの必要な変更は先にcommitする。
+
+```bash
+git restore --source="$baseline_commit" --staged --worktree -- "$managed_path"
+```
+
+schemaファイルをGitで戻しても既存DBの索引や行データは戻らない。必要なrollback SQLだけを実行する。
+固定したcommitと差分に必要な操作だけを行い、無関係なファイルの復元やサービス再起動を追加しない。
+ドキュメントや自分で追記した規則を、元からあったユーザー指示として説明しない。
+ユーザーの明示指示を優先する。
 
 ## ビルド・ベンチ・集計
 
@@ -114,7 +155,7 @@ DB と Go のバージョン、DB の有効設定と索引、nginx と systemd �
 | コマンド | 処理 |
 | --- | --- |
 | `make` | コマンド一覧 |
-| `make backup` | 現在の設定とアプリをバックアップ |
+| `make backup` | ユーザーが指示した場合に設定とアプリをアーカイブ（DB行データは対象外） |
 | `make build` | アプリのビルドのみ |
 | `make restart` | DB・nginx・アプリを再起動 |
 | `make get-conf` | 設定をサーバー別ディレクトリへ取得 |
