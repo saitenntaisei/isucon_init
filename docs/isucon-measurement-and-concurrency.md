@@ -1,0 +1,216 @@
+# 計測と並行処理の実践手順
+
+更新日: 2026-10-28。[共通手順書](isucon-playbook.md) の「SQLは短いのにHTTPが遅い」「変更した指標は改善したのに得点が変わらない」を掘り下げる。
+公式ドキュメントで確認できる仕組みと、実験から一般化した確認手順を分けて記す。
+ここで挙げる施策は比較候補であり、特定の構成での増点や他環境での効果を保証しない。
+
+## 1. 症状から必要な観測を選ぶ
+
+| 症状 | 最初にそろえる観測 | 次の判断 |
+| --- | --- | --- |
+| SQLは短いのにHTTPが遅い | 同じ負荷区間のHTTP、pool待ち、transactionの保持時間 | SQL以外で接続を保持していないか |
+| GoのCPUが低いまま遅延する | 同時刻のgoroutine、アプリ・DB・proxyの資源、要求数 | 待機と負荷供給不足を分ける |
+| SQLやHTTPが改善しても得点差が小さい | 全試行の公式結果、成功した業務操作、要求構成と推移 | 局所改善、負荷変化、試行間の揺れを分ける |
+| batch化で平均は改善するがtimeoutが増える | queue滞留、最古要素の待ち、batch件数、失敗・再試行 | 量と時間の両方で上限を設けられるか |
+| 読み取り用の索引追加後に別APIが遅い | 対象SELECTの計画と件数、INSERT/UPDATEの時間、索引サイズ | 読取削減と書込費用の差を比較する |
+| 手元の修正と稼働結果が対応しない | source revision、build情報、稼働binary hash、実効設定 | 変更が使われているかを先に確かめる |
+
+単一の指標から原因を断定せず、次の節の順に証拠をそろえる。
+仕様と全体スコアによる最終判断は [候補の採用条件](isucon-playbook.md#6-候補を採用する条件) に従う。
+
+## 2. 同じ負荷区間で全ホストを観測する
+
+**測定。** ベンチマーカーの実時刻で初期化・事前確認・負荷・負荷終了後・最終検証を区切る。
+ホストの時刻・timezone・ログ形式を確認し、HTTP、SQL、profile、CPU、I/O、networkに同じ実験IDと区間を付ける。
+アプリを別ホストへ、DBを別ホストへ分けたら、両方を同時に観測する。
+アプリCPUの低下だけでは、DB、通信、workerへ移った仕事量を説明できない。
+
+HTTPにはルートごとの発行数・成功失敗・遅延、SQLには同形SQLの件数・時間を残す。
+業務上の完了数、利用者数、queue長なども時系列で合わせ、序盤と後半の負荷を区別する。
+全期間のSQL時間が減っても、後続処理が採点区間へ前倒しされれば、その区間の負担は増え得る。
+応答に応じて次の行動が増えるベンチでは、同じ入力を処理した比較だとは想定しない。
+[README: 区間別のslow log](../README.md#スロークエリを採点区間で分ける)、
+[負荷構成の比較](../README.md#応答に応じて変わる負荷を比較する)。
+
+集計値の単位とリセット境界もそろえる。Performance Schemaのstatement summaryは累積なので、
+前後差分または明示的なreset境界を使い、digestの未捕捉・集約先も確認する。
+`SUM_TIMER_WAIT`は経過時間の合計であり、CPU時間ではない。対象版とinstrumentationによって
+取得できる情報が異なるため、値がないことを処理がない証拠にしない。
+[MySQL公式: statement summary](https://dev.mysql.com/doc/refman/8.0/en/performance-schema-statement-summary-tables.html)、
+[statement eventの時間](https://dev.mysql.com/doc/refman/8.0/en/performance-schema-events-statements-current-table.html)。
+
+**判断。** 待ちを測る観測と、実行中のCPUを測る観測を組み合わせる。
+GoのCPU profileには、DBや外部サービスのCPU、pool取得待ちやI/O待ちの継続時間は現れない。
+goroutine profileは取得時点のstack分布であり、その個数を待ち時間の寄与率へ換算しない。
+必要に応じてblock、mutex、traceを選び、raw profileと対応するbinary・build情報を残す。
+[Go公式: diagnostics](https://go.dev/doc/diagnostics)、
+[runtime/pprof](https://pkg.go.dev/runtime/pprof)。
+
+**適用条件と復元。** 全クエリ記録や詳細profileは原因調査用の条件として扱う。
+ログ量、I/O、profile採取の負担と相互干渉を含めて、基準版と候補の設定をそろえる。
+本番用に記録を止めた条件の結果と、記録中の結果を混ぜない。
+全件記録を必要とする分析が終わったら元の観測設定へ戻し、最終採用版は大会で使う条件でも完走させる。
+変更前の実効値を保存し、成功・失敗・中断時に戻して結果を確認する。自動復元処理があっても
+process強制終了や接続断で未復元になり得るため、復元成否を実験記録に残す。
+`SET GLOBAL`の変更が既存poolのsessionへ反映されたとは想定せず、変数ごとのscopeと
+実際のアプリ接続のsession値を確かめる。
+[MySQL公式: system variables](https://dev.mysql.com/doc/refman/8.0/en/using-system-variables.html)。
+
+nginxのaccess logにbufferやgzipを指定した場合は、flush条件も確認する。
+ベンチ終了直後のログコピーに末尾が全て含まれるとは仮定せず、書き出しを確認して区間の件数を照合する。
+[nginx公式: access_log](https://nginx.org/en/docs/http/ngx_http_log_module.html#access_log)。
+
+## 3. poolの待機者から接続の保持者をたどる
+
+**測定。** Goの`database/sql`では`SetMaxOpenConns`に達すると新たな操作が接続を待つ。
+`DB.Stats()`の`WaitCount`・`WaitDuration`は累積値なので、負荷区間の前後差を取り、`InUse`・`Idle`と合わせる。
+goroutineでpool待ちが多いことだけでは、接続を占有した処理や原因は特定できない。
+上限を増やす前に保持者を調べる。
+[Go公式: 接続管理](https://go.dev/doc/database/manage-connections)、
+[DBStats](https://pkg.go.dev/database/sql#DBStats)。
+
+全SQLを記録したslow logを、ホスト・DB instance・接続IDで分け、同一接続の
+`START TRANSACTION` / `BEGIN`から`COMMIT` / `ROLLBACK`までを対応付ける。
+使用中のDB・版・出力形式で`# Time`が何の時刻かを確認する。
+タグ付きSQLと同一接続の既知の待ちを使った別の確認で、時刻精度と開始・終了の関係を確かめてから復元する。
+MySQLで利用可能なら`log_slow_extra`の`Start`・`End`も検討する。出力後の並び順を実行順と見なさない。
+閾値未満のSQL、管理statement、途中から始まるtransactionが記録されていない場合は、不完全な推定と明記する。
+[MySQL公式: slow query log](https://dev.mysql.com/doc/refman/8.0/en/slow-query-log.html)。
+
+次を別々に集計する。
+
+- transactionの開始から終了までの接続保持時間。
+- 中のSQLの`Query_time`合計。
+- SQL終了から次のSQL開始までのgap。
+- transactionの種類、担当handler、外部通信などとの対応。
+
+負荷区間をまたぐtransactionは境界で保持時間を切り詰め、未対応の開始・終了と不自然な時刻の重なりを残す。
+並行transactionの合計はconnection-secondsであり、壁時計時間やDBのCPU時間ではない。
+slow logの`Query_time`にはアプリが接続poolを取得する前の待ち時間は含まれない。
+明示transactionの復元だけでは、autocommitの接続利用や`BEGIN`前の接続保持は捕捉できない。
+advisory lockの保持とtransactionが重なる場合も、同じ保持時間を二重に足さない。
+
+**判断。** 長いgapが特定のhandlerに集中しているなら、コードとtraceで、その間の外部HTTP、
+ファイル操作、計算、lockを調べる。gapにはnetwork、driver、scheduler、時刻精度も影響するため、
+gapの全てをアプリCPUや外部HTTPへ割り当てない。
+読み取りtransactionと書き込みtransactionを分け、全`COMMIT`の合計だけで永続化が律速だと決めない。
+[README: transaction復元](../README.md#db-接続-pool-待ちの接続保持者を調べる)、
+[autocommitの比較](../README.md#autocommit-へ移った-commit-費用を追う)。
+
+**適用条件と復元。** まず同じ不変条件を保ったまま保持範囲を短くする候補を作る。
+pool拡大は、下流の同時実行・lock・メモリを悪化させないか別候補で検証する。
+変更後も同じ方法で保持時間と待ちを測り、HTTP・最終整合性・全体スコアまで比較する。
+計測条件を変えて再測定していない指標は「改善したはず」と扱わない。
+
+## 4. 外部副作用をtransactionの外へ出す前に契約を決める
+
+**症状と判断。** 外部API待ちの間に接続や行lockを長く保持しているなら、短いDB transactionと
+外部呼出しを分ける候補になる。ただし、DBのrollbackは、成功済みの決済など外部副作用を取り消さない。
+単に呼出し順を移すだけでは、二重実行や成功済み処理の取りこぼしを増やし得る。
+
+**適用条件。** 実装の前に、各失敗点で次を記入する。
+
+| 確認項目 | 決める内容 |
+| --- | --- |
+| 論理操作の識別 | 同じ業務操作で固定するidempotency keyと、結果の照会方法 |
+| 状態の再検証 | 外部待ちの前後に変わり得る金額・権限・対象状態をどこで確かめるか |
+| 最終DB更新 | 短いtransaction内で再読取し、条件付き更新・一意制約等で何を保証するか |
+| 結果不明 | 外部で成功し応答だけ失われた場合、重複させずどう確定するか |
+| 途中失敗 | 外部成功後のDB失敗、process停止、再試行でどう回復するか |
+| 初期化・再起動 | 進行中の操作をどう隔離・再開し、初期化前の完了を混入させないか |
+
+DB接続を借りる前に業務上の排他を取る方式も比較し、排他待ちの間に接続を占有しないようにする。
+process内lockだけで安全にできるのは、全writerがそのlockを共有する場合である。
+複数process・ホストで書くなら、一意制約・条件付き更新等と合わせて所有権を保証する。
+正本と永続化した集計値は同じ最終transactionで整合させ、lockや接続取得で待った後は初期化の世代も再確認する。
+
+再試行のたびに新しいkeyを作らず、外部サービスのkeyの保存期間・同一parameter要件・失敗時の扱いを確認する。
+keyだけで、別の論理操作同士の競合やDB更新の原子性まで保証できるとは想定しない。
+外部呼出し前のSELECTで正しかったことを、外部呼出し後にも正しい証拠としない。
+長い外部待ちの間に状態が変わる前提で、短いtransaction内で再検証する。
+HTTPの一般的な再試行条件と、外部サービス固有のidempotency keyの保証は別に確認する。
+[RFC 9110: idempotent methods](https://www.rfc-editor.org/rfc/rfc9110.html#section-9.2.2) は
+非冪等な要求の無条件の自動再試行や、任意のproviderのkey契約を保証するものではない。
+
+**確認と復元。** 外部成功後のtimeout・DB失敗・並行要求・process停止を想定し、
+同じ論理操作が二重実行されず、応答済み結果が失われない回復経路を確認する。
+仕様上回復できないならこの分割を採用しない。ロールバックの手順にも、DB差分だけでなく
+進行中・外部成功済み操作の扱いを含める。
+保持時間が減る説明と、全体スコアが改善した証拠は分けて残す。
+
+## 5. batch化と読み取り用索引は増える費用まで測る
+
+**batchの測定。** 件数上限だけでなく、最古の要素の待ち時間・flush間隔・queue長・DB時間・
+成功失敗・再試行を測る。queue待ちを除いたSQL時間だけを改善指標にしない。
+要素が少なくても期限内にflushされ、応答までに必要な更新が完了する設計かを確認する。
+先に応答する方式なら、受付と業務完了を区別し、許容遅延・永続化・再起動後の復元を仕様に合わせる。
+
+**batchの適用条件。** 0件、上限直前・直後、同一キーの重複、順序依存、部分失敗、
+commit結果不明、停止中の未処理分を扱う。
+max件数、max bytes、max待ち時間を設け、bounded queueとbackpressureを選ぶ。
+flush周期の短縮はcommit回数を増やし、長期化は待ち時間を増やすため、一律の推奨値を置かない。
+再試行は対象API・driverの仕様に従い、無条件で全batchを再実行しない。
+SQL書換えの入力境界は [参加記の確認表](isucon-field-notes.md#5-一括化とsql書換えの境界を確認する) も参照する。
+
+内部状態を`queued → claimed → terminal`などで区別し、直接実行へのfallbackは未処理queueからの
+取消が確認できた場合だけにする。workerがclaimした後は、timeoutだけで未実行と判断して二重実行しない。
+commit結果不明を成功・未実行と区別し、処理が確定する前に同じキーの順序制御や初期化barrierを解放しない。
+共有batch内の一要求のcancelが、他の正常な要求まで失敗させないかも確認する。
+
+通知のACKをbatch化するなら、どのprotocol milestoneを記録するかを先に定義する。
+例えばflush成功後にACKを保存する仕様なら、その順序とstream交代時の追越し防止を保つ。
+flush成功は、相手側アプリがイベントを消費した証明とは区別する。
+
+**索引の測定。** covering indexなどでSELECTの読取が減っても、追加した列・索引の維持費用は書き込み側へ掛かる。
+同じ負荷区間で読取と書込の件数・時間・lock・索引サイズを合わせて比較する。
+`EXPLAIN`は使われ方を確認する材料であり、その計画だけで全体の採用を決めない。
+[MySQL公式: indexの利点と費用](https://dev.mysql.com/doc/refman/8.0/en/optimization-indexes.html)。
+
+**判断と復元。** batchと索引は独立候補で比較し、統合後も再測定する。
+統合版だけの結果から個別施策の寄与を割り当てない。
+件数削減・保持時間短縮が見えても、単発の小さい得点差しかないなら増点効果は未確定とする。
+schema変更は初期化で再現でき、必要なデータを失わず戻せるmigration / rollbackを用意する。
+履歴走査を永続化した派生状態へ置き換える場合も、全writerが正本と同じtransactionで更新し、
+初期化時に同じ適格条件と順序で再構築できることが条件になる。
+重複・順序逆転を単純な加減算へ置き換えず、読取削減と更新・lock・初期投入の費用を合わせる。
+
+## 6. 計測結果と稼働版の対応を崩さない
+
+**症状と測定。** 「Gitにある版」「buildへ入力した版」「今動いている版」を別々に識別する。
+HEADが同じでも未commit変更、build flag、依存版、生成物、設定が異なれば同じ実行物とは限らない。
+source revision、dirty状態、Go等の版とbuild情報、配布binaryのhash、起動中processの実体、
+実効設定を実験記録へ残す。
+既に起動中のbinaryと、配置先を上書きした後のファイルのhashを取り違えない。
+
+Git commitへ記録ファイルを追加するとcommit SHA自体が変わる。
+build時点のsource SHAと、後で実験記録を保存したSHAを同じものとして記載しない。
+再buildでhashが変わった場合も、ただちにソース差と断定せず、版情報・flag・埋込値等を照合する。
+
+**適用条件。** 複数ホストの自動操作も、一部実行と全対象の完了を分ける。
+ホスト一覧を標準入力から読むloop内で`ssh`を使う場合、`ssh`が同じ標準入力を消費すると残りの対象を飛ばし得る。
+リモートへ標準入力を渡さない呼出しでは`ssh -n`等で切り離し、渡す必要がある呼出しは
+一覧用とscript用のfile descriptorを分ける。
+各ホストのexit statusと確認結果を記録し、loopが成功終了しただけで全台完了としない。
+[OpenSSH公式: ssh -n](https://man.openbsd.org/ssh.1#n)。
+
+**復元。** 採用版と候補のsource・binary・設定・schemaを対応付けてから反映する。
+戻す対象を明記し、無関係な変更まで戻さない。
+復旧後も稼働版と接続先を照合し、必要な機能確認と公式走行を終えてから採用状態を更新する。
+
+## 7. 最小の実験記録
+
+共通の [記録テンプレート](isucon-playbook.md#6-候補を採用する条件) に次を追加する。
+
+```text
+観測した事実 / まだ推定である原因:
+ホスト・process・接続先 / 負荷区間 / 時刻とログ形式:
+source SHA・dirty / build情報 / 稼働binary hash / 記録保存SHA:
+poolの区間差 / transaction保持 / SQL合計 / gap / 未対応記録:
+観測の有効設定と負担 / 基準・候補の条件差:
+失敗・並行要求・再試行・初期化・再起動の扱い:
+単独候補か統合候補か / 比較回数 / 未確認の効果:
+採用・保留・棄却 / 復旧対象と完了確認:
+```
+
+公開する知見は、一般化した手順・適用条件・公開出典に絞る。
+生ログ、privateな接続先や認証、実環境の設定を公開資料へ持ち込まない。

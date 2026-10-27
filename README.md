@@ -6,6 +6,7 @@ ISUCON の初期設定・ビルド・計測を `make` で行うためのリポ�
 競技中の判断手順は [ISUCON共通の定石と改善フロー](docs/isucon-playbook.md) を参照。
 計測・採否・終了前確認のフロー図と、各回を横断した公式資料の索引を掲載している。
 [参加記から学ぶ実践ノウハウ](docs/isucon-field-notes.md) には、Zenn・Qiita・個人ブログ等の失敗例と確認手順をまとめた。
+[計測と並行処理の実践手順](docs/isucon-measurement-and-concurrency.md) は、pool待ち・transaction保持・外部副作用・batch化を症状から調べる詳細手順。
 
 ## SSH agent を使って競技サーバーから GitHub に接続する
 
