@@ -296,6 +296,32 @@ gap にはアプリ処理やファイル操作だけでなく、scheduler、driv
 また、読み取りだけの transaction と書き込み transaction を分離する。読み取り transaction の
 `COMMIT` 回数や全 `COMMIT` の合計だけから、永続化処理が支配的だとは判断しない。
 
+## 書き込み transaction を排他を保った 1 文へまとめる
+
+「親行を `FOR SHARE` で読む → 規則の存在を確認する → INSERT → COMMIT」のような書き込みは、
+`BEGIN` から `COMMIT` まで 5 往復かかる。同じ排他を保てるなら、autocommit の
+`INSERT ... SELECT ... WHERE NOT EXISTS (...)` 1 文にまとめられる。
+
+```sql
+INSERT INTO comments (user_id, stream_id, body, tip, created_at)
+SELECT ?, s.id, ?, ?, ? FROM streams s
+WHERE s.id = ? AND NOT EXISTS (
+  SELECT 1 FROM ng_words w
+  WHERE w.user_id = s.user_id AND w.stream_id = s.id AND ? LIKE CONCAT('%', w.word, '%')
+)
+```
+
+InnoDB の `INSERT ... SELECT` は、読み取り元の行に共有ロックを取る。
+そのため、同じ親行に `FOR UPDATE` を取って規則を追加・削除する処理とは、元の transaction と同じく直列化される。
+ただし、隔離レベル・binlog 形式・索引によってロックの範囲は変わるので、使っている設定で確かめる。
+
+挿入件数が 0 の場合は、親の不在（404）と規則への一致（400）を区別するために追加で確認する。
+応答に必要な関連データは、キャッシュから組み立てるか、別の読み取りで取得する。
+元の transaction の中で読んでいた値が、commit 後の値で問題ないことを確かめる。
+
+ISUCON13 の再現環境で、コメント投稿をこの形にし、リアクション・入退室も autocommit の 1 文にした。
+得点は直前の約 44 万点から +11% だった（1 回の計測）。
+
 ## autocommit へ移った COMMIT 費用を追う
 
 明示的な transaction 内の書き込みを autocommit の書き込みへ変えると、slow log 上の
