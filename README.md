@@ -7,6 +7,7 @@ ISUCON の初期設定・ビルド・計測を `make` で行うためのリポ�
 計測・採否・終了前確認のフロー図と、各回を横断した公式資料の索引を掲載している。
 [参加記から学ぶ実践ノウハウ](docs/isucon-field-notes.md) には、Zenn・Qiita・個人ブログ等の失敗例と確認手順をまとめた。
 [計測と並行処理の実践手順](docs/isucon-measurement-and-concurrency.md) は、pool待ち・transaction保持・外部副作用・batch化を症状から調べる詳細手順。
+[地域ごとの読み取りレプリカと構造変更の評価](docs/regional-read-replicas.md) は、複数リージョンで DB を共有する構成での同期レプリカの使い方と、構造変更をコストだけで評価しない判断の仕方。
 
 ## SSH agent を使って競技サーバーから GitHub に接続する
 
