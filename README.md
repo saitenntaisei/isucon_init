@@ -7,6 +7,7 @@ ISUCON の初期設定・ビルド・計測を `make` で行うためのリポ�
 計測・採否・終了前確認のフロー図と、各回を横断した公式資料の索引を掲載している。
 [参加記から学ぶ実践ノウハウ](docs/isucon-field-notes.md) には、Zenn・Qiita・個人ブログ等の失敗例と確認手順をまとめた。
 [計測と並行処理の実践手順](docs/isucon-measurement-and-concurrency.md) は、pool待ち・transaction保持・外部副作用・batch化を症状から調べる詳細手順。
+[AIエージェント運用と終盤判断の知見](docs/agent-operations-lessons.md) は、ISUCON2026本選で実装をAIエージェントに任せて得た、終了30分前までは見送らずに試す方針・戻す準備・採点構造の読み方・終盤の再走行の知見。
 
 ## SSH agent を使って競技サーバーから GitHub に接続する
 
